@@ -736,10 +736,25 @@ export class Context {
                             await this.processChunkBuffer(chunkBuffer);
                         } catch (error) {
                             const searchType = isHybrid === true ? 'hybrid' : 'regular';
-                            console.error(`[Context] ❌ Failed to process chunk batch for ${searchType}:`, error);
-                            if (error instanceof Error) {
-                                console.error('[Context] Stack trace:', error.stack);
+                            const errorMsg = error instanceof Error ? error.message : String(error);
+                            const files = [...new Set(chunkBuffer.map(c => c.chunk.metadata.filePath))];
+                            console.error(`[Context] ❌ Batch of ${chunkBuffer.length} chunks failed for ${searchType}: ${errorMsg}`);
+                            console.error(`[Context] 📁 Files in failed batch: ${files.join(', ')}`);
+                            // Retry each chunk individually to salvage the batch
+                            console.log(`[Context] 🔄 Retrying ${chunkBuffer.length} chunks individually...`);
+                            let recovered = 0;
+                            let failed = 0;
+                            for (const item of chunkBuffer) {
+                                try {
+                                    await this.processChunkBuffer([item]);
+                                    recovered++;
+                                } catch (retryError) {
+                                    failed++;
+                                    const retryMsg = retryError instanceof Error ? retryError.message : String(retryError);
+                                    console.warn(`[Context] ⚠️ Chunk failed individually: ${item.chunk.metadata.filePath}:${item.chunk.metadata.startLine}-${item.chunk.metadata.endLine} (${item.chunk.content.length} chars): ${retryMsg}`);
+                                }
                             }
+                            console.log(`[Context] 🔄 Retry result: ${recovered} recovered, ${failed} permanently failed`);
                         } finally {
                             chunkBuffer = []; // Always clear buffer, even on failure
                         }
@@ -772,10 +787,24 @@ export class Context {
             try {
                 await this.processChunkBuffer(chunkBuffer);
             } catch (error) {
-                console.error(`[Context] ❌ Failed to process final chunk batch for ${searchType}:`, error);
-                if (error instanceof Error) {
-                    console.error('[Context] Stack trace:', error.stack);
+                const errorMsg = error instanceof Error ? error.message : String(error);
+                const files = [...new Set(chunkBuffer.map(c => c.chunk.metadata.filePath))];
+                console.error(`[Context] ❌ Final batch of ${chunkBuffer.length} chunks failed for ${searchType}: ${errorMsg}`);
+                console.error(`[Context] 📁 Files in failed batch: ${files.join(', ')}`);
+                console.log(`[Context] 🔄 Retrying ${chunkBuffer.length} chunks individually...`);
+                let recovered = 0;
+                let failed = 0;
+                for (const item of chunkBuffer) {
+                    try {
+                        await this.processChunkBuffer([item]);
+                        recovered++;
+                    } catch (retryError) {
+                        failed++;
+                        const retryMsg = retryError instanceof Error ? retryError.message : String(retryError);
+                        console.warn(`[Context] ⚠️ Chunk failed individually: ${item.chunk.metadata.filePath}:${item.chunk.metadata.startLine}-${item.chunk.metadata.endLine} (${item.chunk.content.length} chars): ${retryMsg}`);
+                    }
                 }
+                console.log(`[Context] 🔄 Retry result: ${recovered} recovered, ${failed} permanently failed`);
             }
         }
 
