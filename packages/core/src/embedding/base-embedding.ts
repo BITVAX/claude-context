@@ -22,8 +22,9 @@ export abstract class Embedding {
         }
 
         // Simple character-based truncation (approximation)
-        // Each token is roughly 4 characters on average for English text
-        const maxChars = this.maxTokens * 4;
+        // Using 3 chars/token as conservative ratio for code (punctuation-heavy text
+        // tokenizes at ~2-3 chars/token vs ~4 for English prose)
+        const maxChars = this.maxTokens * 3;
         if (text.length > maxChars) {
             return text.substring(0, maxChars);
         }

@@ -16,7 +16,8 @@ export class OllamaEmbedding extends Embedding {
     private config: OllamaEmbeddingConfig;
     private dimension: number = 768; // Default dimension for many embedding models
     private dimensionDetected: boolean = false; // Track if dimension has been detected
-    protected maxTokens: number = 2048; // Default context window for Ollama
+    private contextLengthDetected: boolean = false; // Track if context length has been detected
+    protected maxTokens: number = 512; // Conservative default until detected
 
     constructor(config: OllamaEmbeddingConfig) {
         super();
@@ -32,38 +33,64 @@ export class OllamaEmbedding extends Embedding {
             this.dimensionDetected = true;
         }
 
-        // Set max tokens based on config or use default
+        // Set max tokens based on config or will be detected on first use
         if (config.maxTokens) {
             this.maxTokens = config.maxTokens;
-        } else {
-            // Set default based on known models
-            this.setDefaultMaxTokensForModel(config.model);
+            this.contextLengthDetected = true;
         }
 
-        // If no dimension is provided, it will be detected in the first embed call
+        // If no dimension/maxTokens provided, they will be detected in the first embed call
     }
 
-    private setDefaultMaxTokensForModel(model: string): void {
-        // Set different max tokens based on known models
-        if (model?.includes('nomic-embed-text')) {
-            this.maxTokens = 8192; // nomic-embed-text supports 8192 tokens
-        } else if (model?.includes('snowflake-arctic-embed')) {
-            this.maxTokens = 8192; // snowflake-arctic-embed supports 8192 tokens
-        } else {
-            this.maxTokens = 2048; // Default for most Ollama models
+    /**
+     * Detect the model's actual context length by querying Ollama's /api/show endpoint.
+     * Looks for any key matching *.context_length in model_info (e.g. bert.context_length,
+     * nomic-bert.context_length).
+     * Falls back to 512 if detection fails.
+     */
+    async detectContextLength(): Promise<number> {
+        console.log(`[OllamaEmbedding] Detecting context length for model: ${this.config.model}...`);
+        try {
+            const response = await this.client.show({ model: this.config.model });
+            const modelInfo = (response as any).model_info || {};
+
+            for (const [key, value] of Object.entries(modelInfo)) {
+                if (key.endsWith('.context_length') && typeof value === 'number') {
+                    console.log(`[OllamaEmbedding] 📏 Detected context length: ${value} tokens (from ${key})`);
+                    return value;
+                }
+            }
+
+            console.warn(`[OllamaEmbedding] ⚠️ No context_length found in model_info, using default 512`);
+            return 512;
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            console.error(`[OllamaEmbedding] Failed to detect context length: ${errorMessage}, using default 512`);
+            return 512;
         }
     }
 
-    async embed(text: string): Promise<EmbeddingVector> {
-        // Preprocess the text
-        const processedText = this.preprocessText(text);
-
-        // Detect dimension on first use if not configured
+    /**
+     * Ensure dimension and context length are detected before first use.
+     */
+    private async ensureModelInfoDetected(): Promise<void> {
         if (!this.dimensionDetected && !this.config.dimension) {
             this.dimension = await this.detectDimension();
             this.dimensionDetected = true;
             console.log(`[OllamaEmbedding] 📏 Detected Ollama embedding dimension: ${this.dimension} for model: ${this.config.model}`);
         }
+        if (!this.contextLengthDetected && !this.config.maxTokens) {
+            this.maxTokens = await this.detectContextLength();
+            this.contextLengthDetected = true;
+        }
+    }
+
+    async embed(text: string): Promise<EmbeddingVector> {
+        // Detect model info (dimension + context length) on first use
+        await this.ensureModelInfoDetected();
+
+        // Preprocess the text (truncation uses detected maxTokens)
+        const processedText = this.preprocessText(text);
 
         const embedOptions: any = {
             model: this.config.model,
@@ -89,15 +116,11 @@ export class OllamaEmbedding extends Embedding {
     }
 
     async embedBatch(texts: string[]): Promise<EmbeddingVector[]> {
-        // Preprocess all texts
-        const processedTexts = this.preprocessTexts(texts);
+        // Detect model info (dimension + context length) on first use
+        await this.ensureModelInfoDetected();
 
-        // Detect dimension on first use if not configured
-        if (!this.dimensionDetected && !this.config.dimension) {
-            this.dimension = await this.detectDimension();
-            this.dimensionDetected = true;
-            console.log(`[OllamaEmbedding] 📏 Detected Ollama embedding dimension: ${this.dimension} for model: ${this.config.model}`);
-        }
+        // Preprocess all texts (truncation uses detected maxTokens)
+        const processedTexts = this.preprocessTexts(texts);
 
         // Use Ollama's native batch embedding API
         const embedOptions: any = {
@@ -138,17 +161,11 @@ export class OllamaEmbedding extends Embedding {
      */
     async setModel(model: string): Promise<void> {
         this.config.model = model;
-        // Reset dimension detection when model changes
+        // Reset detection flags when model changes
         this.dimensionDetected = false;
-        // Update max tokens for new model
-        this.setDefaultMaxTokensForModel(model);
-        if (!this.config.dimension) {
-            this.dimension = await this.detectDimension();
-            this.dimensionDetected = true;
-            console.log(`[OllamaEmbedding] 📏 Detected Ollama embedding dimension: ${this.dimension} for model: ${this.config.model}`);
-        } else {
-            console.log('[OllamaEmbedding] Dimension already detected for model ' + this.config.model);
-        }
+        this.contextLengthDetected = false;
+        // Re-detect on next use
+        await this.ensureModelInfoDetected();
     }
 
     /**
