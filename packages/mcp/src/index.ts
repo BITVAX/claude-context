@@ -23,7 +23,7 @@ import {
     CallToolRequestSchema
 } from "@modelcontextprotocol/sdk/types.js";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
-import { Context } from "@zilliz/claude-context-core";
+import { Context, Embedding } from "@zilliz/claude-context-core";
 import { MilvusVectorDatabase } from "@zilliz/claude-context-core";
 
 // Import our modular components
@@ -36,6 +36,7 @@ import { EmbeddingRegistry } from "./embedding-registry.js";
 
 class ContextMcpServer {
     private config: ContextMcpConfig;
+    private embedding: Embedding;
     private context: Context;
     private snapshotManager: SnapshotManager;
     private syncManager: SyncManager;
@@ -49,6 +50,7 @@ class ContextMcpServer {
         console.log(`[EMBEDDING] Using model: ${config.embeddingModel}`);
 
         const embedding = createEmbeddingInstance(config);
+        this.embedding = embedding;
         logEmbeddingProviderInfo(config, embedding);
 
         // Initialize vector database
@@ -71,15 +73,6 @@ class ContextMcpServer {
 
         // Load existing codebase snapshot on startup
         this.snapshotManager.loadCodebaseSnapshot();
-
-        // Migrate pre-feature indices: populate embedding metadata for codebases
-        // that were indexed before per-codebase embedding tracking was added.
-        // This ensures they are resilient to future env config changes.
-        this.snapshotManager.populateMissingEmbeddingInfo(
-            config.embeddingProvider,
-            config.embeddingModel,
-            embedding.getDimension()
-        );
     }
 
     /**
@@ -267,6 +260,25 @@ This tool is versatile and can be used before completing various tasks to retrie
 
     async start() {
         console.log('[SYNC-DEBUG] MCP server start() method called');
+
+        // Migrate pre-feature indices: detect real dimension from provider,
+        // then populate embedding metadata for codebases that lack it.
+        try {
+            const realDimension = await this.embedding.detectDimension();
+            this.snapshotManager.populateMissingEmbeddingInfo(
+                this.config.embeddingProvider,
+                this.config.embeddingModel,
+                realDimension
+            );
+        } catch (error: any) {
+            console.warn(`[MIGRATION] Could not detect embedding dimension, using default: ${error.message}`);
+            this.snapshotManager.populateMissingEmbeddingInfo(
+                this.config.embeddingProvider,
+                this.config.embeddingModel,
+                this.embedding.getDimension()
+            );
+        }
+
         console.log(`Starting Context MCP server (transport: ${this.config.transport})...`);
 
         if (this.config.transport === 'sse') {
