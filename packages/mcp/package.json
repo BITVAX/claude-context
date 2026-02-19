@@ -13,6 +13,9 @@
         "lint": "eslint src --ext .ts",
         "lint:fix": "eslint src --ext .ts --fix",
         "typecheck": "tsc --noEmit",
+        "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+        "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --watch",
+        "test:verbose": "NODE_OPTIONS=--experimental-vm-modules jest --verbose",
         "start": "tsx src/index.ts",
         "start:with-env": "OPENAI_API_KEY=${OPENAI_API_KEY:your-api-key-here} MILVUS_ADDRESS=${MILVUS_ADDRESS:localhost:19530} tsx src/index.ts",
         "prepublishOnly": "pnpm build"
@@ -23,7 +26,13 @@
         "zod": "^3.25.55"
     },
     "devDependencies": {
+        "@jest/globals": "^30.0.0",
+        "@types/jest": "^30.0.0",
+        "@types/mock-fs": "^4.13.4",
         "@types/node": "^20.0.0",
+        "jest": "^30.0.0",
+        "mock-fs": "^5.5.0",
+        "ts-jest": "^29.4.0",
         "tsx": "^4.19.4",
         "typescript": "^5.0.0"
     },
