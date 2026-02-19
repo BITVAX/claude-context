@@ -81,6 +81,15 @@ class ContextMcpServer {
         // Load existing codebase snapshot on startup
         this.snapshotManager.loadCodebaseSnapshot();
 
+        // Migrate pre-feature indices: populate embedding metadata for codebases
+        // that were indexed before per-codebase embedding tracking was added.
+        // This ensures they are resilient to future env config changes.
+        this.snapshotManager.populateMissingEmbeddingInfo(
+            config.embeddingProvider,
+            config.embeddingModel,
+            embedding.getDimension()
+        );
+
         this.setupTools();
     }
 

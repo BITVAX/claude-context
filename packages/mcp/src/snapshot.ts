@@ -454,6 +454,36 @@ export class SnapshotManager {
     }
 
     /**
+     * Populate embedding metadata for indexed codebases that lack it (pre-feature indices).
+     * Called once on startup to migrate existing indices so they record the model
+     * that was used at index time. This makes them resilient to future env changes.
+     */
+    public populateMissingEmbeddingInfo(
+        defaultProvider: string,
+        defaultModel: string,
+        defaultDimension: number
+    ): boolean {
+        let hasChanges = false;
+
+        for (const [codebasePath, info] of this.codebaseInfoMap) {
+            if (info.status === 'indexed' && (!info.embeddingProvider || !info.embeddingModel)) {
+                info.embeddingProvider = defaultProvider;
+                info.embeddingModel = defaultModel;
+                info.embeddingDimension = defaultDimension;
+                hasChanges = true;
+                console.log(`[SNAPSHOT] Populated embedding metadata for pre-feature index: ${codebasePath} → ${defaultProvider}:${defaultModel} (dim: ${defaultDimension})`);
+            }
+        }
+
+        if (hasChanges) {
+            this.saveCodebaseSnapshot();
+            console.log(`[SNAPSHOT] Migration complete — saved updated snapshot with embedding metadata`);
+        }
+
+        return hasChanges;
+    }
+
+    /**
      * Get all failed codebases
      */
     public getFailedCodebases(): string[] {
