@@ -3,17 +3,20 @@ import * as path from "path";
 import * as crypto from "crypto";
 import { Context, COLLECTION_LIMIT_MESSAGE } from "@zilliz/claude-context-core";
 import { SnapshotManager } from "./snapshot.js";
+import { SyncManager } from "./sync.js";
 import { ensureAbsolutePath, truncateContent, trackCodebasePath } from "./utils.js";
 
 export class ToolHandlers {
     private context: Context;
     private snapshotManager: SnapshotManager;
+    private syncManager: SyncManager;
     private indexingStats: { indexedFiles: number; totalChunks: number } | null = null;
     private currentWorkspace: string;
 
-    constructor(context: Context, snapshotManager: SnapshotManager) {
+    constructor(context: Context, snapshotManager: SnapshotManager, syncManager: SyncManager) {
         this.context = context;
         this.snapshotManager = snapshotManager;
+        this.syncManager = syncManager;
         this.currentWorkspace = process.cwd();
         console.log(`[WORKSPACE] Current workspace: ${this.currentWorkspace}`);
     }
@@ -792,6 +795,70 @@ export class ToolHandlers {
                 content: [{
                     type: "text",
                     text: `Error getting indexing status: ${error.message || error}`
+                }],
+                isError: true
+            };
+        }
+    }
+
+    public async handleSyncIndex(args: any) {
+        const { path: codebasePath } = args;
+
+        if (this.syncManager.getIsSyncing()) {
+            return {
+                content: [{
+                    type: "text",
+                    text: "A sync operation is already in progress. Please wait for it to complete."
+                }]
+            };
+        }
+
+        try {
+            if (codebasePath) {
+                // Sync a single codebase
+                const absolutePath = ensureAbsolutePath(codebasePath);
+
+                if (!fs.existsSync(absolutePath)) {
+                    return {
+                        content: [{
+                            type: "text",
+                            text: `Error: Path '${absolutePath}' does not exist.`
+                        }],
+                        isError: true
+                    };
+                }
+
+                const stats = await this.syncManager.syncSingleCodebase(absolutePath);
+                const hasChanges = stats.added > 0 || stats.removed > 0 || stats.modified > 0;
+
+                return {
+                    content: [{
+                        type: "text",
+                        text: hasChanges
+                            ? `Sync completed for '${absolutePath}'. Added: ${stats.added}, Removed: ${stats.removed}, Modified: ${stats.modified}.`
+                            : `No changes detected for '${absolutePath}'.`
+                    }]
+                };
+            } else {
+                // Sync all indexed codebases
+                const stats = await this.syncManager.handleSyncIndex();
+                const hasChanges = stats.added > 0 || stats.removed > 0 || stats.modified > 0;
+                const codebaseCount = this.snapshotManager.getIndexedCodebases().length;
+
+                return {
+                    content: [{
+                        type: "text",
+                        text: hasChanges
+                            ? `Sync completed for all ${codebaseCount} indexed codebases. Added: ${stats.added}, Removed: ${stats.removed}, Modified: ${stats.modified}.`
+                            : `No changes detected across all ${codebaseCount} indexed codebases.`
+                    }]
+                };
+            }
+        } catch (error: any) {
+            return {
+                content: [{
+                    type: "text",
+                    text: `Error during sync: ${error.message || error}`
                 }],
                 isError: true
             };
