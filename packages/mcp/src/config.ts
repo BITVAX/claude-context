@@ -38,6 +38,8 @@ interface CodebaseInfoBase {
 export interface CodebaseInfoIndexing extends CodebaseInfoBase {
     status: 'indexing';
     indexingPercentage: number;  // Current progress percentage
+    embeddingProvider?: string;  // Provider used for this indexing run
+    embeddingModel?: string;     // Model used for this indexing run
 }
 
 // Indexed state - when indexing completed successfully
@@ -46,6 +48,9 @@ export interface CodebaseInfoIndexed extends CodebaseInfoBase {
     indexedFiles: number;        // Number of files indexed
     totalChunks: number;         // Total number of chunks generated
     indexStatus: 'completed' | 'limit_reached';  // Status from indexing result
+    embeddingProvider?: string;  // Provider used to index (e.g., 'Ollama', 'OpenAI')
+    embeddingModel?: string;     // Model used to index (e.g., 'snowflake-arctic-embed2')
+    embeddingDimension?: number; // Vector dimension (e.g., 1024)
 }
 
 // Index failed state - when indexing failed

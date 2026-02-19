@@ -73,4 +73,10 @@ export abstract class Embedding {
      * @returns Provider name
      */
     abstract getProvider(): string;
+
+    /**
+     * Get model name
+     * @returns Model name (e.g., 'snowflake-arctic-embed2', 'text-embedding-3-small')
+     */
+    abstract getModel(): string;
 } 

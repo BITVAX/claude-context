@@ -30,6 +30,7 @@ import { createEmbeddingInstance, logEmbeddingProviderInfo } from "./embedding.j
 import { SnapshotManager } from "./snapshot.js";
 import { SyncManager } from "./sync.js";
 import { ToolHandlers } from "./handlers.js";
+import { EmbeddingRegistry } from "./embedding-registry.js";
 
 class ContextMcpServer {
     private server: Server;
@@ -74,7 +75,8 @@ class ContextMcpServer {
         // Initialize managers
         this.snapshotManager = new SnapshotManager();
         this.syncManager = new SyncManager(this.context, this.snapshotManager);
-        this.toolHandlers = new ToolHandlers(this.context, this.snapshotManager);
+        const embeddingRegistry = new EmbeddingRegistry(config);
+        this.toolHandlers = new ToolHandlers(this.context, this.snapshotManager, embeddingRegistry);
 
         // Load existing codebase snapshot on startup
         this.snapshotManager.loadCodebaseSnapshot();

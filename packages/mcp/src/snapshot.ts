@@ -332,17 +332,30 @@ export class SnapshotManager {
     /**
      * Set codebase to indexing status
      */
-    public setCodebaseIndexing(codebasePath: string, progress: number = 0): void {
+    public setCodebaseIndexing(
+        codebasePath: string,
+        progress: number = 0,
+        embeddingInfo?: { provider: string; model: string }
+    ): void {
         this.indexingCodebases.set(codebasePath, progress);
 
         // Remove from other states
         this.indexedCodebases = this.indexedCodebases.filter(path => path !== codebasePath);
         this.codebaseFileCount.delete(codebasePath);
 
+        // Preserve embedding info from existing entry if not provided
+        const existing = this.codebaseInfoMap.get(codebasePath);
+        const existingEmbedding = existing && existing.status === 'indexing'
+            ? { provider: existing.embeddingProvider, model: existing.embeddingModel }
+            : undefined;
+        const resolved = embeddingInfo || existingEmbedding;
+
         // Update info map
         const info: CodebaseInfoIndexing = {
             status: 'indexing',
             indexingPercentage: progress,
+            ...(resolved?.provider && { embeddingProvider: resolved.provider }),
+            ...(resolved?.model && { embeddingModel: resolved.model }),
             lastUpdated: new Date().toISOString()
         };
         this.codebaseInfoMap.set(codebasePath, info);
@@ -353,7 +366,14 @@ export class SnapshotManager {
      */
     public setCodebaseIndexed(
         codebasePath: string,
-        stats: { indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached' }
+        stats: {
+            indexedFiles: number;
+            totalChunks: number;
+            status: 'completed' | 'limit_reached';
+            embeddingProvider?: string;
+            embeddingModel?: string;
+            embeddingDimension?: number;
+        }
     ): void {
         // Add to indexed list if not already there
         if (!this.indexedCodebases.includes(codebasePath)) {
@@ -371,6 +391,9 @@ export class SnapshotManager {
             indexedFiles: stats.indexedFiles,
             totalChunks: stats.totalChunks,
             indexStatus: stats.status,
+            ...(stats.embeddingProvider && { embeddingProvider: stats.embeddingProvider }),
+            ...(stats.embeddingModel && { embeddingModel: stats.embeddingModel }),
+            ...(stats.embeddingDimension && { embeddingDimension: stats.embeddingDimension }),
             lastUpdated: new Date().toISOString()
         };
         this.codebaseInfoMap.set(codebasePath, info);
@@ -413,6 +436,21 @@ export class SnapshotManager {
      */
     public getCodebaseInfo(codebasePath: string): CodebaseInfo | undefined {
         return this.codebaseInfoMap.get(codebasePath);
+    }
+
+    /**
+     * Get embedding info for an indexed codebase.
+     * Returns undefined if the codebase has no embedding metadata (pre-feature indices).
+     */
+    public getCodebaseEmbeddingInfo(codebasePath: string): { provider: string; model: string; dimension: number } | undefined {
+        const info = this.codebaseInfoMap.get(codebasePath);
+        if (!info || info.status !== 'indexed') return undefined;
+        if (!info.embeddingProvider || !info.embeddingModel) return undefined;
+        return {
+            provider: info.embeddingProvider,
+            model: info.embeddingModel,
+            dimension: info.embeddingDimension || 0
+        };
     }
 
     /**
