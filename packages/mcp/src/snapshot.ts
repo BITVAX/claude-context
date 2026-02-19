@@ -484,6 +484,13 @@ export class SnapshotManager {
     }
 
     /**
+     * Get all codebases with their complete info.
+     */
+    public getAllCodebasesInfo(): Map<string, CodebaseInfo> {
+        return new Map(this.codebaseInfoMap);
+    }
+
+    /**
      * Get all failed codebases
      */
     public getFailedCodebases(): string[] {

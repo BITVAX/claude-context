@@ -220,16 +220,15 @@ This tool is versatile and can be used before completing various tasks to retrie
                     },
                     {
                         name: "get_indexing_status",
-                        description: `Get the current indexing status of a codebase. Shows progress percentage for actively indexing codebases and completion status for indexed codebases.`,
+                        description: `Get the current indexing status of a codebase. Shows progress percentage for actively indexing codebases and completion status for indexed codebases. If no path is provided, lists all indexed codebases with their status and embedding model.`,
                         inputSchema: {
                             type: "object",
                             properties: {
                                 path: {
                                     type: "string",
-                                    description: `ABSOLUTE path to the codebase directory to check status for.`
+                                    description: `ABSOLUTE path to the codebase directory to check status for. If omitted, lists all indexed codebases.`
                                 }
-                            },
-                            required: ["path"]
+                            }
                         }
                     },
                 ]

@@ -716,6 +716,11 @@ export class ToolHandlers {
     public async handleGetIndexingStatus(args: any) {
         const { path: codebasePath } = args;
 
+        // If no path provided, list all codebases with their status and embedding info
+        if (!codebasePath) {
+            return this.handleListAllCodebases();
+        }
+
         try {
             // Force absolute path resolution
             const absolutePath = ensureAbsolutePath(codebasePath);
@@ -824,5 +829,53 @@ export class ToolHandlers {
                 isError: true
             };
         }
+    }
+
+    private handleListAllCodebases() {
+        const allCodebases = this.snapshotManager.getAllCodebasesInfo();
+
+        if (allCodebases.size === 0) {
+            return {
+                content: [{
+                    type: "text",
+                    text: "No codebases are currently indexed or being indexed."
+                }]
+            };
+        }
+
+        const lines: string[] = [`📋 All indexed codebases (${allCodebases.size}):\n`];
+
+        for (const [codebasePath, info] of allCodebases) {
+            let line = '';
+            switch (info.status) {
+                case 'indexed': {
+                    const embeddingLabel = info.embeddingProvider && info.embeddingModel
+                        ? `${info.embeddingProvider}/${info.embeddingModel} (dim: ${info.embeddingDimension || '?'})`
+                        : 'unknown';
+                    line = `✅ ${codebasePath}\n   📊 ${info.indexedFiles} files, ${info.totalChunks} chunks | 🧠 ${embeddingLabel}`;
+                    break;
+                }
+                case 'indexing': {
+                    const pct = info.indexingPercentage?.toFixed(1) || '0.0';
+                    const embeddingLabel = info.embeddingProvider && info.embeddingModel
+                        ? ` | 🧠 ${info.embeddingProvider}/${info.embeddingModel}`
+                        : '';
+                    line = `🔄 ${codebasePath}\n   ⏳ Indexing: ${pct}%${embeddingLabel}`;
+                    break;
+                }
+                case 'indexfailed': {
+                    line = `❌ ${codebasePath}\n   🚨 Failed: ${info.errorMessage}`;
+                    break;
+                }
+            }
+            lines.push(line);
+        }
+
+        return {
+            content: [{
+                type: "text",
+                text: lines.join('\n\n')
+            }]
+        };
     }
 } 
