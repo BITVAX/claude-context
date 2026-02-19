@@ -3,17 +3,20 @@ import * as path from "path";
 import * as crypto from "crypto";
 import { Context, COLLECTION_LIMIT_MESSAGE } from "@zilliz/claude-context-core";
 import { SnapshotManager } from "./snapshot.js";
+import { EmbeddingRegistry } from "./embedding-registry.js";
 import { ensureAbsolutePath, truncateContent, trackCodebasePath } from "./utils.js";
 
 export class ToolHandlers {
     private context: Context;
     private snapshotManager: SnapshotManager;
+    private embeddingRegistry: EmbeddingRegistry;
     private indexingStats: { indexedFiles: number; totalChunks: number } | null = null;
     private currentWorkspace: string;
 
-    constructor(context: Context, snapshotManager: SnapshotManager) {
+    constructor(context: Context, snapshotManager: SnapshotManager, embeddingRegistry: EmbeddingRegistry) {
         this.context = context;
         this.snapshotManager = snapshotManager;
+        this.embeddingRegistry = embeddingRegistry;
         this.currentWorkspace = process.cwd();
         console.log(`[WORKSPACE] Current workspace: ${this.currentWorkspace}`);
     }
@@ -277,8 +280,12 @@ export class ToolHandlers {
                 console.log(`[BACKGROUND-INDEX] Retrying indexing for previously failed codebase. Previous error: ${failedInfo?.errorMessage || 'Unknown error'}`);
             }
 
-            // Set to indexing status and save snapshot immediately
-            this.snapshotManager.setCodebaseIndexing(absolutePath, 0);
+            // Set to indexing status with embedding info and save snapshot immediately
+            const currentEmbedding = this.context.getEmbedding();
+            this.snapshotManager.setCodebaseIndexing(absolutePath, 0, {
+                provider: currentEmbedding.getProvider(),
+                model: currentEmbedding.getModel()
+            });
             this.snapshotManager.saveCodebaseSnapshot();
 
             // Track the codebase path for syncing
@@ -381,8 +388,14 @@ export class ToolHandlers {
             });
             console.log(`[BACKGROUND-INDEX] ✅ Indexing completed successfully! Files: ${stats.indexedFiles}, Chunks: ${stats.totalChunks}`);
 
-            // Set codebase to indexed status with complete statistics
-            this.snapshotManager.setCodebaseIndexed(absolutePath, stats);
+            // Set codebase to indexed status with complete statistics and embedding info
+            const embeddingUsed = this.context.getEmbedding();
+            this.snapshotManager.setCodebaseIndexed(absolutePath, {
+                ...stats,
+                embeddingProvider: embeddingUsed.getProvider(),
+                embeddingModel: embeddingUsed.getModel(),
+                embeddingDimension: embeddingUsed.getDimension()
+            });
             this.indexingStats = { indexedFiles: stats.indexedFiles, totalChunks: stats.totalChunks };
 
             // Save snapshot after updating codebase lists
@@ -471,9 +484,21 @@ export class ToolHandlers {
             console.log(`[SEARCH] Query: "${query}"`);
             console.log(`[SEARCH] Indexing status: ${isIndexing ? 'In Progress' : 'Completed'}`);
 
+            // Auto-swap embedding to match the model used for this codebase's index
+            const embeddingInfo = this.snapshotManager.getCodebaseEmbeddingInfo(absolutePath);
+            if (embeddingInfo) {
+                const embedding = this.embeddingRegistry.getOrCreate(embeddingInfo.provider, embeddingInfo.model);
+                this.context.updateEmbedding(embedding);
+                console.log(`[SEARCH] 🔄 Switched to ${embeddingInfo.provider}:${embeddingInfo.model} for this codebase`);
+            } else {
+                // Pre-feature index without metadata — use default
+                this.context.updateEmbedding(this.embeddingRegistry.getDefault());
+                console.log(`[SEARCH] ℹ️  No embedding metadata for this codebase, using default`);
+            }
+
             // Log embedding provider information before search
             const embeddingProvider = this.context.getEmbedding();
-            console.log(`[SEARCH] 🧠 Using embedding provider: ${embeddingProvider.getProvider()} for search`);
+            console.log(`[SEARCH] 🧠 Using embedding provider: ${embeddingProvider.getProvider()}:${embeddingProvider.getModel()} for search`);
             console.log(`[SEARCH] 🔍 Generating embeddings for query using ${embeddingProvider.getProvider()}...`);
 
             // Build filter expression from extensionFilter list
@@ -691,6 +716,11 @@ export class ToolHandlers {
     public async handleGetIndexingStatus(args: any) {
         const { path: codebasePath } = args;
 
+        // If no path provided, list all codebases with their status and embedding info
+        if (!codebasePath) {
+            return this.handleListAllCodebases();
+        }
+
         try {
             // Force absolute path resolution
             const absolutePath = ensureAbsolutePath(codebasePath);
@@ -731,6 +761,9 @@ export class ToolHandlers {
                         statusMessage = `✅ Codebase '${absolutePath}' is fully indexed and ready for search.`;
                         statusMessage += `\n📊 Statistics: ${indexedInfo.indexedFiles} files, ${indexedInfo.totalChunks} chunks`;
                         statusMessage += `\n📅 Status: ${indexedInfo.indexStatus}`;
+                        if (indexedInfo.embeddingProvider && indexedInfo.embeddingModel) {
+                            statusMessage += `\n🧠 Embedding: ${indexedInfo.embeddingProvider}/${indexedInfo.embeddingModel} (dim: ${indexedInfo.embeddingDimension || '?'})`;
+                        }
                         statusMessage += `\n🕐 Last updated: ${new Date(indexedInfo.lastUpdated).toLocaleString()}`;
                     } else {
                         statusMessage = `✅ Codebase '${absolutePath}' is fully indexed and ready for search.`;
@@ -796,5 +829,53 @@ export class ToolHandlers {
                 isError: true
             };
         }
+    }
+
+    private handleListAllCodebases() {
+        const allCodebases = this.snapshotManager.getAllCodebasesInfo();
+
+        if (allCodebases.size === 0) {
+            return {
+                content: [{
+                    type: "text",
+                    text: "No codebases are currently indexed or being indexed."
+                }]
+            };
+        }
+
+        const lines: string[] = [`📋 All indexed codebases (${allCodebases.size}):\n`];
+
+        for (const [codebasePath, info] of allCodebases) {
+            let line = '';
+            switch (info.status) {
+                case 'indexed': {
+                    const embeddingLabel = info.embeddingProvider && info.embeddingModel
+                        ? `${info.embeddingProvider}/${info.embeddingModel} (dim: ${info.embeddingDimension || '?'})`
+                        : 'unknown';
+                    line = `✅ ${codebasePath}\n   📊 ${info.indexedFiles} files, ${info.totalChunks} chunks | 🧠 ${embeddingLabel}`;
+                    break;
+                }
+                case 'indexing': {
+                    const pct = info.indexingPercentage?.toFixed(1) || '0.0';
+                    const embeddingLabel = info.embeddingProvider && info.embeddingModel
+                        ? ` | 🧠 ${info.embeddingProvider}/${info.embeddingModel}`
+                        : '';
+                    line = `🔄 ${codebasePath}\n   ⏳ Indexing: ${pct}%${embeddingLabel}`;
+                    break;
+                }
+                case 'indexfailed': {
+                    line = `❌ ${codebasePath}\n   🚨 Failed: ${info.errorMessage}`;
+                    break;
+                }
+            }
+            lines.push(line);
+        }
+
+        return {
+            content: [{
+                type: "text",
+                text: lines.join('\n\n')
+            }]
+        };
     }
 } 
