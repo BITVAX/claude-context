@@ -43,7 +43,7 @@ afterEach(() => {
 describe('SnapshotManager constructor', () => {
     it('should initialize with snapshot file path based on homedir', () => {
         const manager = new SnapshotManager();
-        // The manager stores the path internally. We verify indirectly via saveCodebaseSnapshot.
+        // Verify indirectly via saveCodebaseSnapshot.
         mockFs.existsSync.mockReturnValue(true);
         manager.saveCodebaseSnapshot();
         expect(mockFs.writeFileSync).toHaveBeenCalledWith(
@@ -123,6 +123,204 @@ describe('State transitions', () => {
     });
 });
 
+describe('Embedding metadata in state transitions', () => {
+    let manager: InstanceType<typeof SnapshotManager>;
+
+    beforeEach(() => {
+        manager = new SnapshotManager();
+    });
+
+    it('should store embeddingInfo when provided to setCodebaseIndexing', () => {
+        manager.setCodebaseIndexing('/project', 0, { provider: 'Ollama', model: 'nomic-embed-text' });
+        const info = manager.getCodebaseInfo('/project');
+        expect(info!.status).toBe('indexing');
+        if (info!.status === 'indexing') {
+            expect(info!.embeddingProvider).toBe('Ollama');
+            expect(info!.embeddingModel).toBe('nomic-embed-text');
+        }
+    });
+
+    it('should preserve existing embeddingInfo on progress update without explicit info', () => {
+        manager.setCodebaseIndexing('/project', 0, { provider: 'OpenAI', model: 'text-embedding-3-small' });
+        // Update progress without providing embeddingInfo
+        manager.setCodebaseIndexing('/project', 50);
+        const info = manager.getCodebaseInfo('/project');
+        if (info!.status === 'indexing') {
+            expect(info!.embeddingProvider).toBe('OpenAI');
+            expect(info!.embeddingModel).toBe('text-embedding-3-small');
+        }
+    });
+
+    it('should store embedding metadata in setCodebaseIndexed', () => {
+        manager.setCodebaseIndexed('/project', {
+            indexedFiles: 100,
+            totalChunks: 500,
+            status: 'completed',
+            embeddingProvider: 'VoyageAI',
+            embeddingModel: 'voyage-code-3',
+            embeddingDimension: 1024,
+        });
+        const info = manager.getCodebaseInfo('/project');
+        if (info!.status === 'indexed') {
+            expect(info!.embeddingProvider).toBe('VoyageAI');
+            expect(info!.embeddingModel).toBe('voyage-code-3');
+            expect(info!.embeddingDimension).toBe(1024);
+        }
+    });
+
+    it('should omit embedding fields when not provided', () => {
+        manager.setCodebaseIndexed('/project', {
+            indexedFiles: 10,
+            totalChunks: 50,
+            status: 'completed',
+        });
+        const info = manager.getCodebaseInfo('/project');
+        if (info!.status === 'indexed') {
+            expect(info!.embeddingProvider).toBeUndefined();
+            expect(info!.embeddingModel).toBeUndefined();
+            expect(info!.embeddingDimension).toBeUndefined();
+        }
+    });
+});
+
+describe('getCodebaseEmbeddingInfo', () => {
+    let manager: InstanceType<typeof SnapshotManager>;
+
+    beforeEach(() => {
+        manager = new SnapshotManager();
+    });
+
+    it('should return embedding info for indexed codebase with metadata', () => {
+        manager.setCodebaseIndexed('/project', {
+            indexedFiles: 100,
+            totalChunks: 500,
+            status: 'completed',
+            embeddingProvider: 'Ollama',
+            embeddingModel: 'nomic-embed-text',
+            embeddingDimension: 768,
+        });
+        const result = manager.getCodebaseEmbeddingInfo('/project');
+        expect(result).toEqual({
+            provider: 'Ollama',
+            model: 'nomic-embed-text',
+            dimension: 768,
+        });
+    });
+
+    it('should return undefined for indexed codebase without embedding metadata', () => {
+        manager.setCodebaseIndexed('/project', {
+            indexedFiles: 10,
+            totalChunks: 50,
+            status: 'completed',
+        });
+        expect(manager.getCodebaseEmbeddingInfo('/project')).toBeUndefined();
+    });
+
+    it('should return undefined for non-indexed codebase', () => {
+        manager.setCodebaseIndexing('/project', 50);
+        expect(manager.getCodebaseEmbeddingInfo('/project')).toBeUndefined();
+    });
+
+    it('should return undefined for unknown codebase', () => {
+        expect(manager.getCodebaseEmbeddingInfo('/unknown')).toBeUndefined();
+    });
+
+    it('should default dimension to 0 when not provided', () => {
+        manager.setCodebaseIndexed('/project', {
+            indexedFiles: 10,
+            totalChunks: 50,
+            status: 'completed',
+            embeddingProvider: 'OpenAI',
+            embeddingModel: 'text-embedding-3-small',
+        });
+        const result = manager.getCodebaseEmbeddingInfo('/project');
+        expect(result).toBeDefined();
+        expect(result!.dimension).toBe(0);
+    });
+});
+
+describe('populateMissingEmbeddingInfo', () => {
+    let manager: InstanceType<typeof SnapshotManager>;
+
+    beforeEach(() => {
+        manager = new SnapshotManager();
+    });
+
+    it('should populate metadata for indexed codebases without it', () => {
+        // Simulate a pre-feature index (no embedding metadata)
+        manager.setCodebaseIndexed('/old-project', {
+            indexedFiles: 50,
+            totalChunks: 200,
+            status: 'completed',
+        });
+
+        mockFs.existsSync.mockReturnValue(true);
+        const changed = manager.populateMissingEmbeddingInfo('OpenAI', 'text-embedding-3-small', 1536);
+
+        expect(changed).toBe(true);
+        const embInfo = manager.getCodebaseEmbeddingInfo('/old-project');
+        expect(embInfo).toEqual({
+            provider: 'OpenAI',
+            model: 'text-embedding-3-small',
+            dimension: 1536,
+        });
+    });
+
+    it('should not overwrite existing embedding metadata', () => {
+        manager.setCodebaseIndexed('/new-project', {
+            indexedFiles: 100,
+            totalChunks: 500,
+            status: 'completed',
+            embeddingProvider: 'Ollama',
+            embeddingModel: 'nomic-embed-text',
+            embeddingDimension: 768,
+        });
+
+        mockFs.existsSync.mockReturnValue(true);
+        const changed = manager.populateMissingEmbeddingInfo('OpenAI', 'text-embedding-3-small', 1536);
+
+        expect(changed).toBe(false);
+        const embInfo = manager.getCodebaseEmbeddingInfo('/new-project');
+        expect(embInfo!.provider).toBe('Ollama');
+    });
+
+    it('should save snapshot when changes are made', () => {
+        manager.setCodebaseIndexed('/old', {
+            indexedFiles: 10,
+            totalChunks: 50,
+            status: 'completed',
+        });
+
+        mockFs.existsSync.mockReturnValue(true);
+        manager.populateMissingEmbeddingInfo('OpenAI', 'model', 1536);
+
+        expect(mockFs.writeFileSync).toHaveBeenCalled();
+    });
+
+    it('should return false when no codebases need updating', () => {
+        // No codebases at all
+        const changed = manager.populateMissingEmbeddingInfo('OpenAI', 'model', 1536);
+        expect(changed).toBe(false);
+    });
+});
+
+describe('getAllCodebasesInfo', () => {
+    it('should return a copy of the codebase info map', () => {
+        const manager = new SnapshotManager();
+        manager.setCodebaseIndexed('/a', { indexedFiles: 10, totalChunks: 50, status: 'completed' });
+        manager.setCodebaseIndexing('/b', 30);
+
+        const allInfo = manager.getAllCodebasesInfo();
+        expect(allInfo.size).toBe(2);
+        expect(allInfo.has('/a')).toBe(true);
+        expect(allInfo.has('/b')).toBe(true);
+
+        // Should be a copy (modifying it shouldn't affect the manager)
+        allInfo.delete('/a');
+        expect(manager.getCodebaseStatus('/a')).toBe('indexed');
+    });
+});
+
 describe('removeCodebaseCompletely', () => {
     it('should remove codebase from all tracking', () => {
         const manager = new SnapshotManager();
@@ -164,7 +362,6 @@ describe('loadCodebaseSnapshot', () => {
         mockFs.existsSync.mockReturnValue(false);
 
         manager.loadCodebaseSnapshot();
-        // Should not throw and have empty state
         expect(manager.getCodebaseStatus('/any')).toBe('not_found');
     });
 
@@ -211,10 +408,7 @@ describe('loadCodebaseSnapshot', () => {
 
         manager.loadCodebaseSnapshot();
 
-        // v1 indexed codebases become indexed in v2
         expect(manager.getCodebaseStatus('/project-a')).toBe('indexed');
-        // v1 indexing codebases are treated as interrupted (not indexed)
-        // They should not appear as indexed
         expect(manager.getCodebaseStatus('/project-b')).not.toBe('indexed');
 
         // Should save in v2 format (migration)
@@ -228,7 +422,6 @@ describe('loadCodebaseSnapshot', () => {
         mockFs.existsSync.mockReturnValue(true);
         mockFs.readFileSync.mockReturnValue('not valid json {{{');
 
-        // Should not throw
         manager.loadCodebaseSnapshot();
         expect(manager.getCodebaseStatus('/any')).toBe('not_found');
     });
@@ -259,7 +452,7 @@ describe('loadCodebaseSnapshot', () => {
         mockFs.existsSync.mockImplementation((p: string) => {
             if (p === '/exists') return true;
             if (p === '/gone') return false;
-            return true; // For snapshot file path itself
+            return true;
         });
         mockFs.readFileSync.mockReturnValue(JSON.stringify(v2Snapshot));
 
@@ -267,6 +460,38 @@ describe('loadCodebaseSnapshot', () => {
 
         expect(manager.getCodebaseStatus('/exists')).toBe('indexed');
         expect(manager.getCodebaseStatus('/gone')).toBe('not_found');
+    });
+
+    it('should preserve embedding metadata when loading v2 snapshot', () => {
+        const manager = new SnapshotManager();
+        const v2Snapshot = {
+            formatVersion: 'v2',
+            codebases: {
+                '/project': {
+                    status: 'indexed',
+                    indexedFiles: 100,
+                    totalChunks: 500,
+                    indexStatus: 'completed',
+                    embeddingProvider: 'Ollama',
+                    embeddingModel: 'nomic-embed-text',
+                    embeddingDimension: 768,
+                    lastUpdated: '2024-01-01T00:00:00.000Z',
+                },
+            },
+            lastUpdated: '2024-01-01T00:00:00.000Z',
+        };
+
+        mockFs.existsSync.mockReturnValue(true);
+        mockFs.readFileSync.mockReturnValue(JSON.stringify(v2Snapshot));
+
+        manager.loadCodebaseSnapshot();
+
+        const embInfo = manager.getCodebaseEmbeddingInfo('/project');
+        expect(embInfo).toEqual({
+            provider: 'Ollama',
+            model: 'nomic-embed-text',
+            dimension: 768,
+        });
     });
 });
 
@@ -308,8 +533,28 @@ describe('saveCodebaseSnapshot', () => {
             throw new Error('Permission denied');
         });
 
-        // Should not throw
         expect(() => manager.saveCodebaseSnapshot()).not.toThrow();
+    });
+
+    it('should include embedding metadata in saved v2 snapshot', () => {
+        const manager = new SnapshotManager();
+        manager.setCodebaseIndexed('/project', {
+            indexedFiles: 100,
+            totalChunks: 500,
+            status: 'completed',
+            embeddingProvider: 'Gemini',
+            embeddingModel: 'gemini-embedding-001',
+            embeddingDimension: 768,
+        });
+
+        mockFs.existsSync.mockReturnValue(true);
+        manager.saveCodebaseSnapshot();
+
+        const savedData = JSON.parse(mockFs.writeFileSync.mock.calls[0][1] as string);
+        const saved = savedData.codebases['/project'];
+        expect(saved.embeddingProvider).toBe('Gemini');
+        expect(saved.embeddingModel).toBe('gemini-embedding-001');
+        expect(saved.embeddingDimension).toBe(768);
     });
 });
 
@@ -371,7 +616,6 @@ describe('getIndexedCodebases (from file)', () => {
 
     it('should fallback to memory on file read error', () => {
         const manager = new SnapshotManager();
-        // Set internal state first
         manager.setCodebaseIndexed('/memory-proj', {
             indexedFiles: 5,
             totalChunks: 20,
@@ -411,10 +655,6 @@ describe('Legacy methods', () => {
     it('addIndexedCodebase should not duplicate entries', () => {
         manager.addIndexedCodebase('/dup', 10);
         manager.addIndexedCodebase('/dup', 20);
-        // Internal indexedCodebases array should only have one entry
-        // We verify indirectly via file-based getIndexedCodebases
-        mockFs.existsSync.mockReturnValue(false); // Force memory fallback... actually not needed
-        // Just check that status is correct (one entry)
         expect(manager.getCodebaseStatus('/dup')).toBe('indexed');
     });
 });

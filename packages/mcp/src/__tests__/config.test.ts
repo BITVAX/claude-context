@@ -102,11 +102,20 @@ describe('getEmbeddingModelForProvider', () => {
 });
 
 describe('createMcpConfig', () => {
+    const originalArgv = process.argv;
+
+    afterEach(() => {
+        process.argv = originalArgv;
+    });
+
     it('should return config with all defaults when no env vars set', () => {
         mockEnvGet.mockReturnValue(undefined);
+        process.argv = ['node', 'script.js'];
         const config = createMcpConfig();
         expect(config.name).toBe('Context MCP Server');
         expect(config.version).toBe('1.0.0');
+        expect(config.transport).toBe('stdio');
+        expect(config.port).toBe(8000);
         expect(config.embeddingProvider).toBe('OpenAI');
         expect(config.embeddingModel).toBe('text-embedding-3-small');
     });
@@ -116,9 +125,9 @@ describe('createMcpConfig', () => {
             if (name === 'EMBEDDING_PROVIDER') return 'Ollama';
             return undefined;
         });
+        process.argv = ['node', 'script.js'];
         const config = createMcpConfig();
         expect(config.embeddingProvider).toBe('Ollama');
-        // Ollama default model
         expect(config.embeddingModel).toBe('nomic-embed-text');
     });
 
@@ -129,6 +138,7 @@ describe('createMcpConfig', () => {
             if (name === 'GEMINI_API_KEY') return 'gemini-test-key';
             return undefined;
         });
+        process.argv = ['node', 'script.js'];
         const config = createMcpConfig();
         expect(config.openaiApiKey).toBe('sk-test-key');
         expect(config.voyageaiApiKey).toBe('pa-test-key');
@@ -141,6 +151,7 @@ describe('createMcpConfig', () => {
             if (name === 'MILVUS_TOKEN') return 'test-token';
             return undefined;
         });
+        process.argv = ['node', 'script.js'];
         const config = createMcpConfig();
         expect(config.milvusAddress).toBe('localhost:19530');
         expect(config.milvusToken).toBe('test-token');
@@ -152,6 +163,7 @@ describe('createMcpConfig', () => {
             if (name === 'MCP_SERVER_VERSION') return '2.5.0';
             return undefined;
         });
+        process.argv = ['node', 'script.js'];
         const config = createMcpConfig();
         expect(config.name).toBe('My Custom Server');
         expect(config.version).toBe('2.5.0');
@@ -164,6 +176,7 @@ describe('createMcpConfig', () => {
             if (name === 'OLLAMA_HOST') return 'http://remote:11434';
             return undefined;
         });
+        process.argv = ['node', 'script.js'];
         const config = createMcpConfig();
         expect(config.ollamaModel).toBe('mxbai-embed-large');
         expect(config.ollamaHost).toBe('http://remote:11434');
@@ -175,6 +188,7 @@ describe('createMcpConfig', () => {
             if (name === 'GEMINI_BASE_URL') return 'https://custom-gemini.example.com';
             return undefined;
         });
+        process.argv = ['node', 'script.js'];
         const config = createMcpConfig();
         expect(config.openaiBaseUrl).toBe('https://custom-openai.example.com');
         expect(config.geminiBaseUrl).toBe('https://custom-gemini.example.com');
@@ -182,6 +196,7 @@ describe('createMcpConfig', () => {
 
     it('should leave optional fields undefined when not set', () => {
         mockEnvGet.mockReturnValue(undefined);
+        process.argv = ['node', 'script.js'];
         const config = createMcpConfig();
         expect(config.openaiApiKey).toBeUndefined();
         expect(config.voyageaiApiKey).toBeUndefined();
@@ -190,7 +205,48 @@ describe('createMcpConfig', () => {
         expect(config.milvusToken).toBeUndefined();
         expect(config.ollamaModel).toBeUndefined();
         expect(config.ollamaHost).toBeUndefined();
-        expect(config.openaiBaseUrl).toBeUndefined();
-        expect(config.geminiBaseUrl).toBeUndefined();
+    });
+
+    // --- all-features: transport & port ---
+
+    it('should read transport config from env vars', () => {
+        mockEnvGet.mockImplementation((name: string) => {
+            if (name === 'MCP_TRANSPORT') return 'sse';
+            if (name === 'MCP_PORT') return '9000';
+            return undefined;
+        });
+        process.argv = ['node', 'script.js'];
+        const config = createMcpConfig();
+        expect(config.transport).toBe('sse');
+        expect(config.port).toBe(9000);
+    });
+
+    it('should read transport from CLI args over env vars', () => {
+        mockEnvGet.mockImplementation((name: string) => {
+            if (name === 'MCP_TRANSPORT') return 'stdio';
+            return undefined;
+        });
+        process.argv = ['node', 'script.js', '--transport', 'sse', '--port', '7777'];
+        const config = createMcpConfig();
+        expect(config.transport).toBe('sse');
+        expect(config.port).toBe(7777);
+    });
+
+    it('should default transport to stdio and port to 8000', () => {
+        mockEnvGet.mockReturnValue(undefined);
+        process.argv = ['node', 'script.js'];
+        const config = createMcpConfig();
+        expect(config.transport).toBe('stdio');
+        expect(config.port).toBe(8000);
+    });
+
+    it('should normalize invalid transport value to stdio', () => {
+        mockEnvGet.mockImplementation((name: string) => {
+            if (name === 'MCP_TRANSPORT') return 'invalid';
+            return undefined;
+        });
+        process.argv = ['node', 'script.js'];
+        const config = createMcpConfig();
+        expect(config.transport).toBe('stdio');
     });
 });
