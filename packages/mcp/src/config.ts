@@ -234,6 +234,10 @@ Environment Variables:
   MILVUS_ADDRESS          Milvus address (optional, can be auto-resolved from token)
   MILVUS_TOKEN            Milvus token (optional, used for authentication and address resolution)
 
+  Sync Configuration:
+  SYNC_INITIAL_DELAY_MS   Delay before initial sync in ms (default: 5000, set to 0 to disable)
+  SYNC_INTERVAL_MS        Periodic sync interval in ms (default: 300000, set to 0 to disable)
+
 Examples:
   # Start MCP server with OpenAI (default) and explicit Milvus address
   OPENAI_API_KEY=sk-xxx MILVUS_ADDRESS=localhost:19530 npx @zilliz/claude-context-mcp@latest

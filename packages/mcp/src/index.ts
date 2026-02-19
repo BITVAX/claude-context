@@ -69,7 +69,7 @@ class ContextMcpServer {
         this.snapshotManager = new SnapshotManager();
         this.syncManager = new SyncManager(this.context, this.snapshotManager);
         const embeddingRegistry = new EmbeddingRegistry(config);
-        this.toolHandlers = new ToolHandlers(this.context, this.snapshotManager, embeddingRegistry);
+        this.toolHandlers = new ToolHandlers(this.context, this.snapshotManager, embeddingRegistry, this.syncManager);
 
         // Load existing codebase snapshot on startup
         this.snapshotManager.loadCodebaseSnapshot();
@@ -234,6 +234,19 @@ This tool is versatile and can be used before completing various tasks to retrie
                             }
                         }
                     },
+                    {
+                        name: "sync_index",
+                        description: `Manually trigger index sync to detect file changes. Syncs a single codebase if path is provided, or all indexed codebases if omitted. Use this when automatic sync is disabled or when you need an immediate sync.`,
+                        inputSchema: {
+                            type: "object",
+                            properties: {
+                                path: {
+                                    type: "string",
+                                    description: `ABSOLUTE path to a specific codebase to sync. If omitted, syncs all indexed codebases.`
+                                }
+                            }
+                        }
+                    },
                 ]
             };
         });
@@ -251,6 +264,8 @@ This tool is versatile and can be used before completing various tasks to retrie
                     return await this.toolHandlers.handleClearIndex(args);
                 case "get_indexing_status":
                     return await this.toolHandlers.handleGetIndexingStatus(args);
+                case "sync_index":
+                    return await this.toolHandlers.handleSyncIndex(args);
 
                 default:
                     throw new Error(`Unknown tool: ${name}`);
